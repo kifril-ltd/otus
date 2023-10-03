@@ -1,12 +1,19 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"log"
 )
 
 var (
 	from, to      string
 	limit, offset int64
+)
+
+var (
+	ErrorFromFlagRequired = errors.New("file to read from is not defined")
+	ErrorToFlagRequired   = errors.New("file to write to is not defined")
 )
 
 func init() {
@@ -18,5 +25,14 @@ func init() {
 
 func main() {
 	flag.Parse()
-	// Place your code here.
+	if from == "" {
+		log.Fatal(ErrorFromFlagRequired)
+	}
+	if to == "" {
+		log.Fatal(ErrorToFlagRequired)
+	}
+
+	if err := Copy(from, to, offset, limit); err != nil {
+		log.Fatal(err)
+	}
 }
