@@ -1,9 +1,12 @@
+//go:build !bench
 // +build !bench
 
 package hw10programoptimization
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,5 +38,18 @@ func TestGetDomainStat(t *testing.T) {
 		result, err := GetDomainStat(bytes.NewBufferString(data), "unknown")
 		require.NoError(t, err)
 		require.Equal(t, DomainStat{}, result)
+	})
+
+	t.Run("more than 100_000 lines", func(t *testing.T) {
+		largeData := strings.Builder{}
+		dataLine := `{"Id":%d,"Name":"Howard Mendoza","Username":"0Oliver","Email":"aliquid_qui_ea@Browsedrive.gov","Phone":"6-866-899-36-79","Password":"InAQJvsq","Address":"Blackbird Place 25"}`
+		for i := 1; i <= 100_001; i++ {
+			largeData.WriteString(fmt.Sprintf(dataLine, i))
+			largeData.WriteString("\n")
+		}
+
+		result, err := GetDomainStat(bytes.NewBufferString(largeData.String()), "gov")
+		require.NoError(t, err)
+		require.Equal(t, DomainStat{"browsedrive.gov": 100_001}, result)
 	})
 }

@@ -1,66 +1,131 @@
 package hw10programoptimization
 
 import (
-	"encoding/json"
-	"fmt"
+	"bufio"
 	"io"
-	"regexp"
 	"strings"
+	"sync"
+
+	"github.com/valyala/fastjson"
 )
 
-type User struct {
-	ID       int
-	Name     string
-	Username string
-	Email    string
-	Phone    string
-	Password string
-	Address  string
-}
+const (
+	numWorkers = 2
+	batchSize  = 500
+)
 
 type DomainStat map[string]int
 
 func GetDomainStat(r io.Reader, domain string) (DomainStat, error) {
-	u, err := getUsers(r)
-	if err != nil {
-		return nil, fmt.Errorf("get users error: %w", err)
+	stat := make(DomainStat)
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		email := fastjson.GetString(scanner.Bytes(), "Email")
+
+		if email != "" {
+			splitEmail := strings.SplitN(email, "@", 2)
+			if len(splitEmail) == 2 && strings.HasSuffix(splitEmail[1], "."+domain) {
+				resultDomain := strings.ToLower(splitEmail[1])
+				stat[resultDomain]++
+			}
+		}
 	}
-	return countDomains(u, domain)
+	return stat, nil
 }
 
-type users [100_000]User
+// GetDomainStatConcurrent Конкурентная обработка данных по батчам. Не получилось попасть в ограничение по памяти.
+func GetDomainStatConcurrent(r io.Reader, domain string) (DomainStat, error) {
+	usersCh := reader(r)
 
-func getUsers(r io.Reader) (result users, err error) {
-	content, err := io.ReadAll(r)
-	if err != nil {
-		return
+	domainCountersCh := make([]<-chan DomainStat, numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		domainCountersCh[i] = domainCounter(usersCh, domain)
 	}
 
-	lines := strings.Split(string(content), "\n")
-	for i, line := range lines {
-		var user User
-		if err = json.Unmarshal([]byte(line), &user); err != nil {
-			return
+	var mu sync.Mutex
+	stat := make(DomainStat)
+
+	for s := range statMerger(domainCountersCh...) {
+		mu.Lock()
+		for d, count := range s {
+			stat[d] += count
 		}
-		result[i] = user
+		mu.Unlock()
 	}
-	return
+	return stat, nil
 }
 
-func countDomains(u users, domain string) (DomainStat, error) {
-	result := make(DomainStat)
+func reader(r io.Reader) <-chan []string {
+	out := make(chan []string)
+	scanner := bufio.NewScanner(r)
 
-	for _, user := range u {
-		matched, err := regexp.Match("\\."+domain, []byte(user.Email))
-		if err != nil {
-			return nil, err
+	go func() {
+		defer close(out)
+
+		usersBatch := make([]string, 0, batchSize)
+		for scanner.Scan() {
+			if len(usersBatch) == batchSize {
+				out <- usersBatch
+				usersBatch = []string{}
+			}
+			usersBatch = append(usersBatch, scanner.Text())
 		}
 
-		if matched {
-			num := result[strings.ToLower(strings.SplitN(user.Email, "@", 2)[1])]
-			num++
-			result[strings.ToLower(strings.SplitN(user.Email, "@", 2)[1])] = num
+		if len(usersBatch) != 0 {
+			out <- usersBatch
+		}
+	}()
+
+	return out
+}
+
+func domainCounter(users <-chan []string, domain string) <-chan DomainStat {
+	out := make(chan DomainStat)
+
+	go func() {
+		defer close(out)
+		for userBatch := range users {
+			stat := make(DomainStat)
+			for _, user := range userBatch {
+				email := fastjson.GetString([]byte(user), "Email")
+
+				if email != "" {
+					splitEmail := strings.SplitN(email, "@", 2)
+					if len(splitEmail) == 2 && strings.HasSuffix(splitEmail[1], "."+domain) {
+						resultDomain := strings.ToLower(splitEmail[1])
+						stat[resultDomain]++
+					}
+				}
+			}
+			out <- stat
+		}
+	}()
+
+	return out
+}
+
+func statMerger(stats ...<-chan DomainStat) <-chan DomainStat {
+	out := make(chan DomainStat)
+
+	var wg sync.WaitGroup
+	multiplexer := func(p <-chan DomainStat) {
+		defer wg.Done()
+
+		for in := range p {
+			out <- in
 		}
 	}
-	return result, nil
+
+	wg.Add(len(stats))
+	for _, in := range stats {
+		go multiplexer(in)
+	}
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	return out
 }
