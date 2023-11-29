@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kifril-ltd/otus-hw/hw11_telnet_client/telnet"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +30,7 @@ func TestTelnetClient(t *testing.T) {
 			timeout, err := time.ParseDuration("10s")
 			require.NoError(t, err)
 
-			client := NewTelnetClient(l.Addr().String(), timeout, io.NopCloser(in), out)
+			client := telnet.NewTelnetClient(l.Addr().String(), timeout, io.NopCloser(in), out)
 			require.NoError(t, client.Connect())
 			defer func() { require.NoError(t, client.Close()) }()
 
@@ -61,5 +62,25 @@ func TestTelnetClient(t *testing.T) {
 		}()
 
 		wg.Wait()
+	})
+}
+
+func TestNoConnection(t *testing.T) {
+	t.Run("send", func(t *testing.T) {
+		client := telnet.NewTelnetClient("127.0.0.1:1234", time.Second*5, nil, nil)
+		err := client.Send()
+		require.ErrorIs(t, err, telnet.ErrConnectionNotOpen)
+	})
+
+	t.Run("receive", func(t *testing.T) {
+		client := telnet.NewTelnetClient("127.0.0.1:1234", time.Second*5, nil, nil)
+		err := client.Receive()
+		require.ErrorIs(t, err, telnet.ErrConnectionNotOpen)
+	})
+
+	t.Run("close", func(t *testing.T) {
+		client := telnet.NewTelnetClient("127.0.0.1:1234", time.Second*5, nil, nil)
+		err := client.Close()
+		require.NoError(t, err)
 	})
 }
